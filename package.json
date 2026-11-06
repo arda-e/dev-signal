@@ -21,7 +21,7 @@
     "configure:supabase": "node scripts/configure-supabase.mjs"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.6.4",
+    "@biomejs/biome": "2.6.6",
     "@devvit/web": "0.15.2",
     "@electric-sql/pglite": "0.5.15",
     "@types/node": "24.19.2",
