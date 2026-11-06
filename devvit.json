@@ -1,0 +1,104 @@
+{
+  "$schema": "https://developers.reddit.com/schema/config-file.v1.json",
+  "name": "ardico-signals",
+  "post": {
+    "entrypoints": {
+      "default": {
+        "entry": "splash.html"
+      },
+      "game": {
+        "entry": "game.html"
+      }
+    }
+  },
+  "server": {},
+  "menu": {
+    "items": [
+      {
+        "label": "[ardico-signals] New Post",
+        "description": "Create a new ardico-signals post.",
+        "location": "subreddit",
+        "endpoint": "/internal/on/menu/new-post"
+      },
+      {
+        "label": "DevSignal: Run Scan",
+        "description": "Discover and checkpoint one bounded batch of source posts",
+        "location": "subreddit",
+        "forUserType": "moderator",
+        "endpoint": "/internal/menu/devsignal-scan"
+      },
+      {
+        "label": "DevSignal: Publish Next Topic",
+        "description": "Prepare or publish one topic as a normal text post",
+        "location": "subreddit",
+        "forUserType": "moderator",
+        "endpoint": "/internal/menu/devsignal-publish"
+      }
+    ]
+  },
+  "triggers": {
+    "onAppInstall": "/internal/on/app/install"
+  },
+  "scripts": {
+    "dev": "npm run watch"
+  },
+  "dev": {
+    "subreddit": "ardico_signals_dev"
+  },
+  "permissions": {
+    "redis": true,
+    "http": {
+      "enable": true,
+      "domains": ["api.openai.com"]
+    }
+  },
+  "scheduler": {
+    "tasks": {
+      "devsignal-daily-scan": {
+        "endpoint": "/internal/scheduler/devsignal-scan",
+        "cron": "0 6 * * *"
+      },
+      "devsignal-chunk-worker": {
+        "endpoint": "/internal/scheduler/devsignal-scan",
+        "cron": "* * * * *"
+      },
+      "devsignal-publish": {
+        "endpoint": "/internal/scheduler/devsignal-publish",
+        "cron": "*/5 * * * *"
+      }
+    }
+  },
+  "settings": {
+    "global": {
+      "openai-api-key": {
+        "type": "string",
+        "label": "OpenAI API key",
+        "isSecret": true
+      },
+      "digests-enabled": {
+        "type": "boolean",
+        "label": "Enable digest generation",
+        "defaultValue": false
+      },
+      "publish-to-reddit": {
+        "type": "boolean",
+        "label": "Publish digests to r/ardico_signals_dev",
+        "defaultValue": false
+      },
+      "supabase-enabled": {
+        "type": "boolean",
+        "label": "Enable digest-only Supabase delivery",
+        "defaultValue": false
+      },
+      "supabase-project-url": {
+        "type": "string",
+        "label": "Supabase project URL"
+      },
+      "supabase-ingest-token": {
+        "type": "string",
+        "label": "Restricted Supabase ingest token",
+        "isSecret": true
+      }
+    }
+  }
+}

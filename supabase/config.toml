@@ -1,0 +1,6 @@
+project_id = "devsignal"
+
+[functions.devsignal-ingest]
+# The handler enforces a separate high-entropy bearer token on EVERY request.
+# This token grants only the handler's digest upsert/delete operations, not table reads.
+verify_jwt = false

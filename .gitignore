@@ -1,0 +1,9 @@
+/node_modules/
+/dist/
+/public/*.js*
+/.env
+
+*.bak
+/supabase/functions/devsignal-ingest/index.ts
+/supabase/.temp/
+/.env.*
