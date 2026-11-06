@@ -15,6 +15,7 @@ import {
   type IncCounterRsp,
 } from '../shared/api.ts'
 import {runCollector} from './collector.ts'
+import {runDailyBatch} from './daily-batch.ts'
 import {dbGetCounter, dbIncCounter} from './db.ts'
 import {publishNextTopic} from './publisher.ts'
 
@@ -48,15 +49,55 @@ async function route(
 ): Promise<void> {
   if (
     reqMsg.method === 'POST' &&
-    reqMsg.url === '/internal/scheduler/devsignal-scan'
+    (reqMsg.url === '/internal/scheduler/devsignal-daily-start' ||
+      reqMsg.url === '/internal/scheduler/devsignal-daily-continue' ||
+      reqMsg.url === '/internal/menu/devsignal-daily-resume')
   ) {
-    const result = await runCollector()
-    console.log('Scheduled scan:', JSON.stringify(result))
-    writeJson<PartialJsonValue>(
-      result.status === 'partial' ? 500 : 200,
-      result,
-      rspMsg,
-    )
+    let continuation: {day: string; sequence: number} | undefined
+    if (reqMsg.url === '/internal/scheduler/devsignal-daily-continue') {
+      const body = await readJson<{data?: {day: string; sequence: number}}>(
+        reqMsg,
+      )
+      continuation = body.data
+      if (
+        !continuation ||
+        typeof continuation.day !== 'string' ||
+        !Number.isSafeInteger(continuation.sequence)
+      ) {
+        writeJson<PartialJsonValue>(
+          400,
+          {status: 'invalid_continuation'},
+          rspMsg,
+        )
+        return
+      }
+    }
+    const result = await runDailyBatch({
+      continuation,
+      resume: reqMsg.url === '/internal/menu/devsignal-daily-resume',
+    })
+    console.log('Morning batch:', JSON.stringify(result))
+    if (reqMsg.url === '/internal/menu/devsignal-daily-resume')
+      writeJson<UiResponse>(
+        200,
+        {
+          showToast: {
+            text: `Morning run: ${result.status}`,
+            appearance: result.status === 'COMPLETE' ? 'success' : 'neutral',
+          },
+        },
+        rspMsg,
+      )
+    else writeJson<PartialJsonValue>(200, result, rspMsg)
+    return
+  }
+  // Older installs may still deliver retired cron jobs; they must not start work.
+  if (
+    reqMsg.method === 'POST' &&
+    (reqMsg.url === '/internal/scheduler/devsignal-scan' ||
+      reqMsg.url === '/internal/scheduler/devsignal-publish')
+  ) {
+    writeJson<PartialJsonValue>(200, {status: 'retired_schedule'}, rspMsg)
     return
   }
   if (
@@ -85,24 +126,22 @@ async function route(
 
   if (
     reqMsg.method === 'POST' &&
-    (reqMsg.url === '/internal/scheduler/devsignal-publish' ||
-      reqMsg.url === '/internal/menu/devsignal-publish')
+    reqMsg.url === '/internal/menu/devsignal-publish'
   ) {
     const result = await publishNextTopic()
     console.log('Topic publisher:', JSON.stringify(result))
-    if (reqMsg.url === '/internal/menu/devsignal-publish') {
-      writeJson<UiResponse>(
-        200,
-        {
-          showToast: {
-            text: result.message,
-            appearance: result.status === 'published' ? 'success' : 'neutral',
-          },
-          ...(result.url ? {navigateTo: result.url} : {}),
+    writeJson<UiResponse>(
+      200,
+      {
+        showToast: {
+          text: result.message,
+          appearance: result.status === 'published' ? 'success' : 'neutral',
         },
-        rspMsg,
-      )
-    } else writeJson<PartialJsonValue>(200, result, rspMsg)
+        ...(result.url ? {navigateTo: result.url} : {}),
+      },
+      rspMsg,
+    )
+
     return
   }
 

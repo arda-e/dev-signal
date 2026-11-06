@@ -5,10 +5,10 @@ import {
   type Digest,
   type IngestMessage,
 } from '../shared/digest.ts'
+import {nextMorning} from '../shared/scan-time.ts'
 import {sendDigest} from './supabase.ts'
 
-const QUEUE = 'devsignal:digest-queue'
-const DAY = 86400_000
+export const DIGEST_QUEUE = 'devsignal:digest-queue'
 export const digestKey = (id: string) => `devsignal:digests:${id}`
 export function sourceUnavailable(source: {
   removed?: boolean
@@ -26,15 +26,15 @@ export async function storeDigest(digest: Digest) {
   await redis.set(digestKey(digest.sourceId), JSON.stringify(digest), {
     expiration: new Date(digest.expiresAt),
   })
-  await redis.zAdd(QUEUE, {member: digest.sourceId, score: Date.now()})
+  await redis.zAdd(DIGEST_QUEUE, {member: digest.sourceId, score: Date.now()})
 }
 
-/** One due item: initial sync, then a daily source-deletion check. */
+/** A bounded parallel chunk keeps 30 days of source checks within the morning window. */
 export async function processDigestQueue() {
-  const next = (await redis.zRange(QUEUE, 0, 0))[0]
-  if (!next || next.score > Date.now()) return undefined
-  const id = next.member as T3
-  const attemptKey = `devsignal:digest-attempts:${id}`
+  const due = (await redis.zRange(DIGEST_QUEUE, 0, 4)).filter(
+    item => item.score <= Date.now(),
+  )
+  if (!due.length) return undefined
   const enabled = (await settings.get<boolean>('supabase-enabled')) === true
   const url = enabled ? await settings.get<string>('supabase-project-url') : ''
   const token = enabled
@@ -44,7 +44,41 @@ export async function processDigestQueue() {
     return {
       status: 'needs_configuration',
       message: 'Configure Supabase URL and ingest token.',
+      processed: 0,
     }
+  const results = await Promise.all(
+    due.map(item =>
+      processDigestItem(item.member as T3, {enabled, url, token}),
+    ),
+  )
+  const priority = [
+    'maintenance_failed',
+    'retry',
+    'withdrawn',
+    'expired',
+    'synced',
+    'checked',
+  ]
+  const primary = results.reduce((a, b) =>
+    priority.indexOf(a.status) <= priority.indexOf(b.status) ? a : b,
+  )
+  return {
+    ...primary,
+    message: `Processed ${results.length} digest maintenance items.`,
+    processed: results.length,
+  }
+}
+
+async function processDigestItem(
+  id: T3,
+  config: {
+    enabled: boolean
+    url: string | undefined
+    token: string | undefined
+  },
+) {
+  const {enabled, url, token} = config
+  const attemptKey = `devsignal:digest-attempts:${id}`
   const attempts = Number((await redis.get(attemptKey)) ?? '0')
   try {
     const raw = await redis.get(digestKey(id))
@@ -64,7 +98,10 @@ export async function processDigestQueue() {
         status = 'withdrawn'
       } else {
         outgoing = {action: 'upsert', digest}
-        nextCheck = Math.min(Date.now() + DAY, Date.parse(digest.expiresAt))
+        nextCheck = Math.min(
+          nextMorning(Date.now()),
+          Date.parse(digest.expiresAt),
+        )
         status = enabled ? 'synced' : 'checked'
       }
     }
@@ -72,8 +109,8 @@ export async function processDigestQueue() {
     await redis.del(attemptKey)
     if (nextCheck === undefined) {
       await redis.del(digestKey(id))
-      await redis.zRem(QUEUE, [id])
-    } else await redis.zAdd(QUEUE, {member: id, score: nextCheck})
+      await redis.zRem(DIGEST_QUEUE, [id])
+    } else await redis.zAdd(DIGEST_QUEUE, {member: id, score: nextCheck})
     return {
       status,
       message: 'Processed one digest maintenance item.',
@@ -85,7 +122,7 @@ export async function processDigestQueue() {
       expiration: new Date(Date.now() + DIGEST_RETENTION_MS),
     })
     if (count >= 5) {
-      await redis.zRem(QUEUE, [id])
+      await redis.zRem(DIGEST_QUEUE, [id])
       return {
         status: 'maintenance_failed',
         message:
@@ -93,7 +130,7 @@ export async function processDigestQueue() {
         sourceId: id,
       }
     }
-    await redis.zAdd(QUEUE, {
+    await redis.zAdd(DIGEST_QUEUE, {
       member: id,
       score: Date.now() + 60_000 * 2 ** attempts,
     })

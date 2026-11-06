@@ -91,3 +91,22 @@ test('404', async () => {
     status: 404,
   })
 })
+
+test('retired recurring endpoints cannot trigger scans or publication', async () => {
+  for (const path of [
+    '/internal/scheduler/devsignal-scan',
+    '/internal/scheduler/devsignal-publish',
+  ]) {
+    const response = await fetch(`${serverURL}${path}`, {method: 'POST'})
+    assert.equal(response.status, 200)
+    assert.deepEqual(await response.json(), {status: 'retired_schedule'})
+  }
+})
+test('malformed continuation cannot bootstrap a new daily batch', async () => {
+  const response = await fetch(
+    `${serverURL}/internal/scheduler/devsignal-daily-continue`,
+    {method: 'POST', body: JSON.stringify({data: {day: '2026-11-06'}})},
+  )
+  assert.equal(response.status, 400)
+  assert.deepEqual(await response.json(), {status: 'invalid_continuation'})
+})

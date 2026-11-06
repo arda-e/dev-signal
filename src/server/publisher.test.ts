@@ -5,8 +5,10 @@ import {
   reddit,
   redis,
   runWithContext,
+  scheduler,
   settings,
 } from '@devvit/web/server'
+import {runDailyBatch} from './daily-batch.ts'
 import {
   generateTopic,
   parseTopic,
@@ -31,12 +33,15 @@ const original = {
   rem: redis.zRem,
   comments: reddit.getComments,
   get: redis.get,
+  mGet: redis.mGet,
   set: redis.set,
   watch: redis.watch,
   settings: settings.get,
   source: reddit.getPostById,
   submit: reddit.submitPost,
   fetch: globalThis.fetch,
+  runJob: scheduler.runJob,
+  cancelJob: scheduler.cancelJob,
 }
 let data: Map<string, string>
 let queue: Map<string, number>
@@ -108,6 +113,10 @@ beforeEach(() => {
     },
   })) as unknown as typeof reddit.getComments
   redis.get = (async (key: string) => data.get(key)) as typeof redis.get
+  redis.mGet = async keys => {
+    assert.ok(keys.length > 0 && keys.length <= 15)
+    return keys.map(key => data.get(key) ?? null)
+  }
   redis.set = (async (key: string, value: string, options?: {nx?: boolean}) => {
     if (options?.nx && data.has(key)) return ''
     data.set(key, value)
@@ -184,12 +193,15 @@ afterEach(() => {
   redis.zRem = original.rem
   reddit.getComments = original.comments
   redis.get = original.get
+  redis.mGet = original.mGet
   redis.set = original.set
   redis.watch = original.watch
   settings.get = original.settings
   reddit.getPostById = original.source
   reddit.submitPost = original.submit
   globalThis.fetch = original.fetch
+  scheduler.runJob = original.runJob
+  scheduler.cancelJob = original.cancelJob
 })
 
 test('one topic is drafted, then published as a text post, without duplicate submission', async () => {
@@ -216,7 +228,9 @@ test('ambiguous submission is not automatically retried', async () => {
   await run()
   rejectSubmit = true
   assert.equal((await run()).status, 'uncertain')
-  assert.equal((await run()).status, 'idle')
+  const unresolved = await run()
+  assert.equal(unresolved.status, 'unresolved')
+  assert.match(unresolved.message, /reconcil/i)
   assert.equal(submissions, 1)
 })
 test('generation failures are bounded and do not publish', async () => {
@@ -240,6 +254,20 @@ test('incomplete scans and other destinations do not publish', async () => {
     publishNextTopic,
   )
   assert.equal(rsp.status, 'disabled')
+  assert.equal(calls, 0)
+})
+test('an empty completed checkpoint needs no receipt lookup or API work', async () => {
+  data.set(
+    'devsignal:checkpoints:ClaudeAI',
+    JSON.stringify({
+      runId: '2026-11-06',
+      stage: 'COMPLETE',
+      candidates: [],
+      errors: [],
+    }),
+  )
+  assert.equal((await run()).status, 'idle')
+  assert.equal(submissions, 0)
   assert.equal(calls, 0)
 })
 test('rendered topic is readable markdown with deterministic source attribution', () => {
@@ -342,11 +370,83 @@ test('ambiguous submissions reserve daily quota and retain no summary in permane
     assert.equal((await run()).status, 'drafted')
     assert.equal((await run()).status, 'uncertain')
   }
-  assert.equal((await run()).status, 'idle')
+  assert.equal((await run()).status, 'unresolved')
   assert.equal(submissions, 3)
   const intent = JSON.parse(data.get('devsignal:publications:t3_abc') ?? '{}')
   assert.equal(intent.state, 'sending')
   assert.equal(intent.topic, undefined)
+})
+
+test('a recovered digest batch reports persisted sending receipts despite full quota', async () => {
+  const now = Date.parse('2026-11-06T05:00:00Z')
+  const day = '2026-11-06'
+  const sourceIds = ['t3_abc', 't3_def', 't3_ghi']
+  data.set(
+    'devsignal:checkpoints:ClaudeAI',
+    JSON.stringify({
+      runId: day,
+      stage: 'COMPLETE',
+      candidates: sourceIds,
+      errors: [],
+    }),
+  )
+  data.set(
+    'devsignal:publisher:day:2026-11-06:ClaudeAI',
+    JSON.stringify(sourceIds),
+  )
+  for (const sourceId of sourceIds)
+    data.set(
+      `devsignal:publications:${sourceId}`,
+      JSON.stringify({
+        state: 'sending',
+        sourceId,
+        runId: day,
+        subreddit: 'ClaudeAI',
+      }),
+    )
+  const batchKey = `devsignal:daily-batches:${day}`
+  data.set(
+    batchKey,
+    JSON.stringify({
+      day,
+      phase: 'DIGEST',
+      status: 'RUNNING',
+      startedAt: '2026-11-06T04:00:00.000Z',
+      deadlineAt: '2026-11-06T06:00:00.000Z',
+      lastRun: '2026-11-06T04:59:00.000Z',
+      lastSequence: 59,
+      errors: [],
+    }),
+  )
+  const receiptsBefore = sourceIds.map(id =>
+    data.get(`devsignal:publications:${id}`),
+  )
+  scheduler.runJob = async () => 'recovery-job'
+  scheduler.cancelJob = async () => {}
+  const result = await runWithContext(
+    {subredditName: 'ardico_signals_dev'} as unknown as Context,
+    () =>
+      runDailyBatch(
+        {continuation: {day, sequence: 60}},
+        {
+          now: () => now,
+          collect: async () => {
+            throw new Error('scan already completed')
+          },
+          publish: publishNextTopic,
+        },
+      ),
+  )
+  assert.equal(result.status, 'PARTIAL')
+  const batch = JSON.parse(data.get(batchKey) ?? '{}')
+  assert.match(batch.reason, /reconcil/i)
+  assert.deepEqual(batch.errors, ['DIGEST:unresolved'])
+  assert.deepEqual(
+    sourceIds.map(id => data.get(`devsignal:publications:${id}`)),
+    receiptsBefore,
+  )
+  assert.equal(submissions, 0)
+  assert.equal(calls, 0)
 })
 
 test('maintenance retries are capped and expired queue records are pruned', async () => {

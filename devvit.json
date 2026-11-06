@@ -33,6 +33,13 @@
         "location": "subreddit",
         "forUserType": "moderator",
         "endpoint": "/internal/menu/devsignal-publish"
+      },
+      {
+        "label": "DevSignal: Resume Morning Run",
+        "description": "Resume the current daily batch before 09:00 Istanbul",
+        "location": "subreddit",
+        "forUserType": "moderator",
+        "endpoint": "/internal/menu/devsignal-daily-resume"
       }
     ]
   },
@@ -54,17 +61,12 @@
   },
   "scheduler": {
     "tasks": {
-      "devsignal-daily-scan": {
-        "endpoint": "/internal/scheduler/devsignal-scan",
-        "cron": "0 6 * * *"
+      "devsignal-daily-batch": {
+        "endpoint": "/internal/scheduler/devsignal-daily-start",
+        "cron": "0 3 * * *"
       },
-      "devsignal-chunk-worker": {
-        "endpoint": "/internal/scheduler/devsignal-scan",
-        "cron": "* * * * *"
-      },
-      "devsignal-publish": {
-        "endpoint": "/internal/scheduler/devsignal-publish",
-        "cron": "*/5 * * * *"
+      "devsignal-continue-batch": {
+        "endpoint": "/internal/scheduler/devsignal-daily-continue"
       }
     }
   },

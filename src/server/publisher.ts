@@ -157,11 +157,27 @@ async function work(): Promise<Result> {
       status: 'needs_configuration',
       message: 'Set the openai-api-key app secret.',
     }
+  let unresolved: Result | undefined
   for (const subreddit of SUBREDDITS) {
     const raw = await redis.get(`devsignal:checkpoints:${subreddit}`)
     if (!raw) continue
     const cp = JSON.parse(raw) as Checkpoint
-    if (cp.stage !== 'COMPLETE') continue
+    if (cp.stage !== 'COMPLETE' || !cp.candidates.length) continue
+    // Audit current intents even when their reserved slots already fill the quota.
+    // A crash after submit can leave an unknown outcome; never resubmit it.
+    const receipts = await redis.mGet(
+      cp.candidates.slice(0, 15).map(id => `devsignal:publications:${id}`),
+    )
+    for (const receiptRaw of receipts) {
+      if (!receiptRaw) continue
+      const receipt = JSON.parse(receiptRaw) as Publication
+      if (receipt.state === 'sending' && receipt.runId === cp.runId)
+        unresolved ??= {
+          status: 'unresolved',
+          message: `Publication outcome for ${receipt.sourceId} is unknown; reconcile its sending receipt before retrying. No automatic resubmission.`,
+          sourceId: receipt.sourceId,
+        }
+    }
     const dailyKey = `devsignal:publisher:day:${cp.runId}:${subreddit}`
     const publishedToday = JSON.parse(
       (await redis.get(dailyKey)) ?? '[]',
@@ -329,10 +345,12 @@ async function work(): Promise<Result> {
       }
     }
   }
-  return {
-    status: 'idle',
-    message: 'No completed unpublished candidates, or daily limit reached.',
-  }
+  return (
+    unresolved ?? {
+      status: 'idle',
+      message: 'No completed unpublished candidates, or daily limit reached.',
+    }
+  )
 }
 
 export async function publishNextTopic(): Promise<Result> {

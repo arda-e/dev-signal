@@ -2,6 +2,7 @@ import {createHash, randomUUID} from 'node:crypto'
 import {reddit, redis} from '@devvit/web/server'
 import type {T3} from '@devvit/web/shared'
 import {SOURCE_SUBREDDITS} from '../shared/digest.ts'
+import {istanbulDay} from '../shared/scan-time.ts'
 import {releaseLease} from './lease.ts'
 
 const SUBREDDITS = SOURCE_SUBREDDITS
@@ -55,7 +56,7 @@ async function put(key: string, value: unknown): Promise<void> {
   await redis.set(key, JSON.stringify(value), {expiration: expiration()})
 }
 function runDay(now: Date): string {
-  return new Date(now.getTime() - 6 * 60 * 60 * 1000).toISOString().slice(0, 10)
+  return istanbulDay(now.getTime())
 }
 function initial(subreddit: string, runId: string): Checkpoint {
   return {

@@ -19,7 +19,7 @@ Readers need their own least-privilege access, configured separately. No ChatGPT
 
 Before uninstalling, stop publication, inspect pending/failed queue items and remove external records that must be deleted. Stopping workers cannot propagate future deletions. Keep the retention job running until all rows expire or have been removed. Token revocation prevents calls; it does not erase rows.
 
-retry schedules another attempt; maintenance_failed after five attempts requires investigation. Requeue a verified source in devsignal:digest-queue after fixing access errors. Never blindly reset a Reddit sending receipt after an ambiguous submission.
+The morning batch starts at 06:00 Istanbul and stops by the 09:00 target or when finished. Successful source checks are due next morning. retry schedules another attempt; maintenance_failed after five attempts requires investigation. Requeue a verified source in devsignal:digest-queue after fixing access errors. Never blindly reset a Reddit sending receipt after an ambiguous submission.
 
 Provider logs/backups and downstream copies have separate retention controls. The table's expiry is not a guarantee covering every copy.
 
