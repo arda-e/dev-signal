@@ -28,11 +28,11 @@
         "endpoint": "/internal/menu/devsignal-scan"
       },
       {
-        "label": "DevSignal: Publish Next Topic",
-        "description": "Prepare or publish one topic as a normal text post",
+        "label": "DevSignal: Sync Inbox",
+        "description": "Refresh and deliver one selected post with bounded comments to Supabase",
         "location": "subreddit",
         "forUserType": "moderator",
-        "endpoint": "/internal/menu/devsignal-publish"
+        "endpoint": "/internal/menu/devsignal-sync"
       },
       {
         "label": "DevSignal: Resume Morning Run",
@@ -55,8 +55,8 @@
   "permissions": {
     "redis": true,
     "http": {
-      "enable": true,
-      "domains": ["api.openai.com"]
+      "enable": false,
+      "domains": []
     }
   },
   "scheduler": {
@@ -72,26 +72,6 @@
   },
   "settings": {
     "global": {
-      "openai-api-key": {
-        "type": "string",
-        "label": "OpenAI API key",
-        "isSecret": true
-      },
-      "digests-enabled": {
-        "type": "boolean",
-        "label": "Enable digest generation",
-        "defaultValue": false
-      },
-      "publish-to-reddit": {
-        "type": "boolean",
-        "label": "Publish digests to r/ardico_signals_dev",
-        "defaultValue": false
-      },
-      "supabase-enabled": {
-        "type": "boolean",
-        "label": "Enable digest-only Supabase delivery",
-        "defaultValue": false
-      },
       "supabase-project-url": {
         "type": "string",
         "label": "Supabase project URL"
@@ -100,6 +80,11 @@
         "type": "string",
         "label": "Restricted Supabase ingest token",
         "isSecret": true
+      },
+      "collector-export-enabled": {
+        "type": "boolean",
+        "label": "Enable selected post and comment delivery to Supabase",
+        "defaultValue": false
       }
     }
   }

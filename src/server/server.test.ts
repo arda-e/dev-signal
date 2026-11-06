@@ -37,8 +37,12 @@ before(async () => {
       () => onReq(req, rsp),
     )
   })
-  await new Promise<void>(resolve => {
-    server.listen(0, '127.0.0.1', () => resolve())
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject)
+    server.listen(0, '127.0.0.1', () => {
+      server.off('error', reject)
+      resolve()
+    })
   })
   const info = server.address() as AddressInfo
   serverURL = `http://127.0.0.1:${info.port}`
@@ -109,4 +113,13 @@ test('malformed continuation cannot bootstrap a new daily batch', async () => {
   )
   assert.equal(response.status, 400)
   assert.deepEqual(await response.json(), {status: 'invalid_continuation'})
+})
+
+test('the retired manual publisher cannot publish even if an old menu invokes it', async () => {
+  const response = await fetch(`${serverURL}/internal/menu/devsignal-publish`, {
+    method: 'POST',
+  })
+  assert.equal(response.status, 200)
+  const result = (await response.json()) as {showToast: {text: string}}
+  assert.match(result.showToast.text, /retired/)
 })

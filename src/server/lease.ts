@@ -1,5 +1,8 @@
 import {redis} from '@devvit/web/server'
 
+export const COLLECTOR_LOCK = 'devsignal:collector-lock'
+export const COLLECTOR_LOCK_MS = 180_000
+
 /** An expired worker must never release a newer worker's lock. */
 export async function releaseLease(
   key: string,

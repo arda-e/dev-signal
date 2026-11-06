@@ -14,10 +14,10 @@ import {
   type IncCounterReq,
   type IncCounterRsp,
 } from '../shared/api.ts'
+import {failureCode, processExportQueue} from './collection-store.ts'
 import {runCollector} from './collector.ts'
 import {runDailyBatch} from './daily-batch.ts'
 import {dbGetCounter, dbIncCounter} from './db.ts'
-import {publishNextTopic} from './publisher.ts'
 
 type AnyRsp =
   | GetCounterRsp
@@ -33,8 +33,7 @@ export async function onReq(
   try {
     await route(reqMsg, rspMsg)
   } catch (err) {
-    const msg = `server error; ${err instanceof Error ? err.stack : err}`
-    console.error(msg)
+    console.error('Server request failed:', failureCode(err))
     writeJson<ErrorRsp>(
       500,
       {error: 'Internal server error', status: 500},
@@ -126,22 +125,38 @@ async function route(
 
   if (
     reqMsg.method === 'POST' &&
-    reqMsg.url === '/internal/menu/devsignal-publish'
+    reqMsg.url === '/internal/menu/devsignal-sync'
   ) {
-    const result = await publishNextTopic()
-    console.log('Topic publisher:', JSON.stringify(result))
+    const result = await processExportQueue()
+    console.log('Inbox delivery:', JSON.stringify(result))
     writeJson<UiResponse>(
       200,
       {
         showToast: {
           text: result.message,
-          appearance: result.status === 'published' ? 'success' : 'neutral',
+          appearance: result.status === 'synced' ? 'success' : 'neutral',
         },
-        ...(result.url ? {navigateTo: result.url} : {}),
       },
       rspMsg,
     )
 
+    return
+  }
+
+  if (
+    reqMsg.method === 'POST' &&
+    reqMsg.url === '/internal/menu/devsignal-publish'
+  ) {
+    writeJson<UiResponse>(
+      200,
+      {
+        showToast: {
+          text: 'Topic publication has been retired. Use Sync Inbox.',
+          appearance: 'neutral',
+        },
+      },
+      rspMsg,
+    )
     return
   }
 

@@ -1,33 +1,35 @@
-# DevSignal review brief
+# DevSignal collector review brief
 
-Owner/contact: u/ardico. Personal, non-commercial learning and writing project with a public Reddit digest component. No revenue, data resale or model training.
+Owner/contact: u/ardico. Personal, non-commercial reading and learning project. No revenue, resale, model training or user profiling. This version replaces the previous proposed public-digest design with a collector-only architecture.
 
 ## Proposed behaviour
 
-A Devvit collector reads bounded public listings from r/ClaudeAI and r/ChatGPT, selects relevant technical discussions and temporarily reads their comments. OpenAI produces original attributed briefs. At most six topic posts per scan day are published in the owner's public r/ardico_signals_dev community, with automation disclosure; there are no writes to source communities.
+A Devvit collector reads bounded public listings from r/ClaudeAI and r/ChatGPT, ranks candidates using metadata and selects up to 15 per source/day. It reads one selected post and at most 30 newest top-level comments, with at most two SDK pages of 15 and no recursive reply traversal. Post/comment bodies are capped and coverage limitations are stored.
 
-Published digests and source references can also be stored in private Supabase through a restricted authenticated ingest function. The owner's private tools may read those summaries for learning, exploration and manually written personal LinkedIn posts. Raw comment archives, original post bodies and author metadata are not sent to Supabase. The repository implements no Notion writer or LinkedIn publisher.
+The app optionally delivers raw selected post text and bounded comment records to private Supabase through an authenticated fixed-table upsert/delete function. Dedicated author/account/profile fields and internal diversity hashes are excluded, but raw text can contain identifying information. This is not a derived-digest-only transfer or a claim of anonymization.
 
-The only recurring schedule starts a morning batch at 06:00 Istanbul. Bounded one-off continuations process the pipeline toward a 09:00 target, then stop. Failures, missing configuration and missed deadlines are recorded distinctly; timing depends on live service availability.
+The owner prefers a separate future scheduled AI workflow to analyze the inbox for personal learning, exploration and manually written personal LinkedIn posts. That downstream use is part of the proposed data flow. No external AI processor, ChatGPT reader connection, Notion writer or LinkedIn publisher is implemented. This version does not call an LLM or publish generated Reddit topics. Public digest publication is not being presented as a benefit that the collector actually provides.
 
-## Implementation status
+## Limits and lifecycle
 
-The Devvit 0.15.2 Web template, bounded collector/checkpoints and moderator menus are retained. Generation, publication, external ingestion, backoff and maintenance code is present. All three generation/publication/external switches default off.
+The only recurring schedule starts at 06:00 Istanbul; one-off bounded continuations target completion by 09:00 and stop on completion/deadline. New/Hot/Top-day targets are 100/50/50 listing entries/source before deduplication, not guaranteed unique counts. Collection/sync process one selected source per chunk.
 
-No Supabase project/exact hostname is configured. No live external write or Reddit text-post submission was performed in this implementation session. Local tests and review limitations are reported separately. Neither an app listing nor this document is a claim of Reddit approval.
+Raw snapshots expire in at most 48 hours per collection. Maintenance refreshes comment samples without extending expiry. Detected unavailable posts cause local-content pruning and external deletion. Short-lived metadata checkpoints expire after write; known deletion cleanup preserves their existing expiry. Errors are isolated, retried with bounds, then surfaced for operator intervention. Daily checks, external outages and disabled/uninstalled workers mean deletion propagation has no guaranteed SLA. Supabase physical retention requires a separately installed Cron job.
+
+The SQL inbox has private claims, revision fencing and processing states for the future reader. The ingest token can only upsert/delete validated content in the fixed table; the service key stays inside Supabase. Private-reader access is not created automatically.
 
 ## Questions for Reddit
 
-Is this use eligible, including public source reading, attributed destination-community digests, and private storage/reading for the stated personal use? Does the Supabase requirement qualify for a fetch-domain exception? Which deletion/data-lifecycle changes are required before approval?
+Is this limited personal reading/analysis use eligible under Devvit, including raw selected text/comment transfer and the intended later AI analysis? Does the private versioned processing inbox qualify for a Supabase fetch-domain exception, or is another approved access route required? Which lifecycle/deletion controls are required before activation?
 
-## Operational validation
+## Implementation and deployment status
 
-Owner: u/ardico. First run generation with publication off; inspect only the derived draft. Then explicitly enable one manual publication and verify the destination, attribution and disclosure. Enable external delivery after endpoint/domain setup and inspect one row with no source body/author fields. Verify repeated delivery produces one row and one Reddit post.
+Devvit 0.15.2 Web template, resumable collector and manual scan are preserved. OpenAI settings/domain, AI implementation and generated-topic publisher are removed. The new collector-export-enabled switch defaults off, HTTP defaults disabled until an exact Supabase host is configured, and legacy publisher endpoints are inert.
 
-During the first daily cycle, inspect scan counts/errors/shortfalls, request durations, sending receipts, retry and maintenance_failed results. Unexpected raw source storage/logging, duplicate publication, failed withdrawal, repeated throttling or stalled runs require disabling the affected setting and investigation. Test the hourly retention job and a synthetic source-removal flow before unattended operation.
+No project/domain is configured and this version has not been uploaded/installed. Local tests cover the pipeline with emulated network boundaries and SQL behaviour using PGlite PostgreSQL. That does not validate live Reddit/Supabase, PostgREST hosting or pg_cron. Code review/CI are not Reddit approval.
 
-## Review and live-validation limits
+## Operational validation after setup
 
-The initial snapshot had no Git baseline. The morning scheduling change was reviewed against the published source by seven review lenses. Two interruption/recovery defects were identified, fixed and covered by regressions. Historical maintenance now processes up to five due items per step; a synthetic 180-item backlog is covered locally. The kickoff was moved to 06:00 Istanbul to give the 09:00 target a three-hour window.
+Owner: u/ardico. Verify wrong/missing tokens fail before storage access, extra/identity fields are rejected, and one synthetic row can be inserted, updated and deleted privately. Verify identical retries preserve completed processing state, changed content creates a new revision, and old claims cannot finish it. Confirm the 15-minute expiry job.
 
-Live scheduler timing, Redis leases, API throughput, Deno hosting and the SQL migration remain unverified. The source is a review prototype with generation/publication/external delivery disabled by default; neither code review nor CI is Reddit approval.
+Then explicitly enable delivery and run one manual scan/sync cycle. Inspect counts, sample coverage, redacted errors and request durations without logging bodies. In the first morning cycle, check SCAN/SYNC progress and final COMPLETE/PARTIAL/BLOCKED/DEADLINE_MISSED status. Unintended source writes, unexpected outbound hosts, identity-field export, loss of authentication, stale content after deletion or duplicate processing require disabling export and investigating; retain the cleanup job until external content is removed. Ordinary bounded sampling/truncation is expected behaviour, not a regression.

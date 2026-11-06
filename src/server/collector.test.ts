@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import {test} from 'node:test'
 import {reddit, redis} from '@devvit/web/server'
 import {candidateScore, runCollector, selectCandidates} from './collector.ts'
+import {commentListing} from './test/collection.ts'
 
 const item = (id: number, extra = {}) => ({
   id: `t3_${id}` as `t3_${string}`,
@@ -35,7 +36,7 @@ test('ranking applies penalties and selects diverse authors', () => {
   assert.ok(chosen.indexOf('t3_15') < chosen.indexOf('t3_2'))
 })
 
-test('chunks resume and deduplicate without retaining raw comments', async () => {
+test('chunks resume and deduplicate with bounded comment snapshots and isolated source errors', async () => {
   const original = {
     del: redis.del,
     get: redis.get,
@@ -44,13 +45,29 @@ test('chunks resume and deduplicate without retaining raw comments', async () =>
     hotPosts: reddit.getHotPosts,
     topPosts: reddit.getTopPosts,
     comments: reddit.getComments,
+    post: reddit.getPostById,
+    add: redis.zAdd,
+    remove: redis.zRem,
     cleanup: redis.zRemRangeByScore,
     watch: redis.watch,
   }
   const data = new Map<string, string>()
+  data.set('devsignal:legacy-comments-migration', '62')
   let maxPageSize = 0
   let commentCalls = 0
   try {
+    redis.zAdd = (async () => 1) as typeof redis.zAdd
+    redis.zRem = (async () => 1) as typeof redis.zRem
+    reddit.getPostById = (async (id: string) => ({
+      id,
+      subredditName: Number(id.slice(3)) >= 1000 ? 'ChatGPT' : 'ClaudeAI',
+      title: 'Claude API project',
+      body: 'Source body',
+      score: 20,
+      numberOfComments: 5,
+      stickied: false,
+      createdAt: new Date(Date.now() - 1000),
+    })) as unknown as typeof reddit.getPostById
     redis.del = (async (...keys: string[]) => {
       for (const key of keys) data.delete(key)
     }) as typeof redis.del
@@ -100,28 +117,28 @@ test('chunks resume and deduplicate without retaining raw comments', async () =>
     reddit.getNewPosts = listing as unknown as typeof reddit.getNewPosts
     reddit.getHotPosts = listing as unknown as typeof reddit.getHotPosts
     reddit.getTopPosts = listing as unknown as typeof reddit.getTopPosts
-    reddit.getComments = ((options: {postId: string}) => ({
-      async *[Symbol.asyncIterator]() {
-        commentCalls++
-        if (commentCalls === 1) throw new Error('simulated rate limit')
-        yield {
+    reddit.getComments = ((options: {postId: string}) => {
+      commentCalls++
+      if (commentCalls === 1) throw new Error('simulated rate limit')
+      return commentListing([
+        {
           id: 't1_one',
           parentId: options.postId,
           authorName: 'commenter',
           body: 'hello',
           score: 3,
           createdAt: new Date(),
-        }
-        yield {
+        },
+        {
           id: 't1_one',
           parentId: options.postId,
           authorName: 'commenter',
           body: 'updated',
           score: 4,
           createdAt: new Date(),
-        }
-      },
-    })) as unknown as typeof reddit.getComments
+        },
+      ])
+    }) as typeof reddit.getComments
     for (let i = 0; i < 80; i++) {
       const result = await runCollector()
       if (result.message === 'Daily scan complete.') break
@@ -137,7 +154,15 @@ test('chunks resume and deduplicate without retaining raw comments', async () =>
       assert.equal(cp.commentOffset, 15)
     }
     assert.equal(maxPageSize, 20)
-    assert.equal(commentCalls, 0)
+    assert.equal(commentCalls, 31)
+    const records = [...data.entries()].filter(([key]) =>
+      key.startsWith('devsignal:collections:'),
+    )
+    assert.equal(records.length, 30)
+    const saved = JSON.parse(records[0]?.[1] ?? '{}')
+    assert.equal(saved.comments.length, 1)
+    assert.equal(saved.comments[0].body, 'updated')
+    assert.equal(JSON.stringify(saved).includes('commenter'), false)
     assert.equal(
       [...data.keys()].some(key => key.startsWith('devsignal:comments:')),
       false,
@@ -152,6 +177,9 @@ test('chunks resume and deduplicate without retaining raw comments', async () =>
     reddit.getHotPosts = original.hotPosts
     reddit.getTopPosts = original.topPosts
     reddit.getComments = original.comments
+    reddit.getPostById = original.post
+    redis.zAdd = original.add
+    redis.zRem = original.remove
   }
 })
 

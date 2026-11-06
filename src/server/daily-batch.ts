@@ -1,10 +1,9 @@
 import {randomUUID} from 'node:crypto'
 import {redis, scheduler} from '@devvit/web/server'
 import {morningWindow} from '../shared/scan-time.ts'
+import {EXPORT_QUEUE, processExportQueue} from './collection-store.ts'
 import {runCollector} from './collector.ts'
-import {DIGEST_QUEUE} from './digest-store.ts'
 import {releaseLease} from './lease.ts'
-import {publishNextTopic} from './publisher.ts'
 
 const MINUTE = 60_000
 const FINALIZATION_WINDOW = 3 * MINUTE
@@ -14,11 +13,11 @@ type StepResult = {status: string; message?: string}
 type Dependencies = {
   now: () => number
   collect: () => Promise<StepResult>
-  publish: () => Promise<StepResult>
+  sync: () => Promise<StepResult>
 }
 type Batch = {
   day: string
-  phase: 'SCAN' | 'DIGEST'
+  phase: 'SCAN' | 'SYNC'
   status: 'RUNNING' | 'COMPLETE' | 'PARTIAL' | 'BLOCKED' | 'DEADLINE_MISSED'
   startedAt: string
   deadlineAt: string
@@ -32,7 +31,7 @@ type Batch = {
 const defaults: Dependencies = {
   now: Date.now,
   collect: runCollector,
-  publish: publishNextTopic,
+  sync: processExportQueue,
 }
 
 /** One daily kickoff; continuations exist only while this morning's batch is active. */
@@ -68,7 +67,7 @@ export async function runDailyBatch(
       })
     return {status: 'busy', day}
   }
-  const key = `devsignal:daily-batches:${day}`
+  const key = `devsignal:collector-batches:${day}`
   const save = (batch: Batch) =>
     redis.set(key, JSON.stringify(batch), {
       expiration: new Date(deadline + 7 * 86400_000),
@@ -142,31 +141,19 @@ export async function runDailyBatch(
     await save(batch)
     try {
       const result =
-        batch.phase === 'SCAN' ? await deps.collect() : await deps.publish()
-      if (
-        [
-          'partial',
-          'error',
-          'retry',
-          'uncertain',
-          'unresolved',
-          'maintenance_failed',
-        ].includes(result.status)
-      )
+        batch.phase === 'SCAN' ? await deps.collect() : await deps.sync()
+      if (['partial', 'error', 'retry', 'failed'].includes(result.status))
         batch.errors.push(`${batch.phase}:${result.status}`)
       if (batch.phase === 'SCAN' && result.message === 'Daily scan complete.')
-        batch.phase = 'DIGEST'
-      else if (batch.phase === 'DIGEST') {
-        if (result.status === 'unresolved')
-          batch.reason =
-            result.message ?? 'Publication outcome needs reconciliation.'
-        if (['idle', 'unresolved'].includes(result.status)) {
-          const pending = (await redis.zRange(DIGEST_QUEUE, 0, 0))[0]
+        batch.phase = 'SYNC'
+      else if (batch.phase === 'SYNC') {
+        if (result.status === 'idle') {
+          const pending = (await redis.zRange(EXPORT_QUEUE, 0, 0))[0]
           // A backed-off retry due this morning is still unfinished work.
           if (!pending || pending.score >= deadline)
             batch.status = batch.errors.length ? 'PARTIAL' : 'COMPLETE'
         } else if (
-          ['disabled', 'needs_configuration', 'ready'].includes(result.status)
+          ['disabled', 'needs_configuration'].includes(result.status)
         ) {
           batch.status = 'BLOCKED'
           batch.reason = result.message ?? result.status

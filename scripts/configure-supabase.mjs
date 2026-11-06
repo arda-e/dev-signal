@@ -21,6 +21,7 @@ if (
   )
 const path = new URL('../devvit.json', import.meta.url)
 const config = JSON.parse(await readFile(path, 'utf8'))
+config.permissions.http.enable = true
 config.permissions.http.domains = [
   ...config.permissions.http.domains.filter(
     domain => !domain.endsWith('.supabase.co'),

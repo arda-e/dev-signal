@@ -1,4 +1,4 @@
-import {parseIngestMessage} from '../shared/digest.ts'
+import {MAX_PAYLOAD_BYTES, parseIngestMessage} from '../shared/collection.ts'
 
 export type IngestConfig = {
   token: string
@@ -24,7 +24,7 @@ async function boundedJson(request: Request) {
     const {done, value} = await reader.read()
     if (done) break
     size += value.length
-    if (size > 24_000) {
+    if (size > MAX_PAYLOAD_BYTES) {
       await reader.cancel()
       throw new Error('Payload too large')
     }
@@ -59,9 +59,9 @@ export async function handleIngest(
   try {
     message = parseIngestMessage(await boundedJson(request))
   } catch {
-    return new Response('Invalid digest payload', {status: 400})
+    return new Response('Invalid collector payload', {status: 400})
   }
-  const root = `${config.projectUrl.replace(/\/$/, '')}/rest/v1/devsignal_digests`
+  const root = `${config.projectUrl.replace(/\/$/, '')}/rest/v1/devsignal_inbox`
   const headers = {
     apikey: config.serviceKey,
     Authorization: `Bearer ${config.serviceKey}`,
@@ -83,13 +83,15 @@ export async function handleIngest(
             signal: AbortSignal.timeout(8_000),
             redirect: 'error',
             body: JSON.stringify({
-              source_id: message.digest.sourceId,
-              source_subreddit: message.digest.sourceSubreddit,
-              run_id: message.digest.runId,
-              published_post_id: message.digest.publishedPostId,
-              created_at: message.digest.createdAt,
-              expires_at: message.digest.expiresAt,
-              topic: message.digest.topic,
+              source_id: message.snapshot.sourceId,
+              source_subreddit: message.snapshot.sourceSubreddit,
+              run_id: message.snapshot.runId,
+              fetched_at: message.snapshot.collectedAt,
+              expires_at: message.snapshot.expiresAt,
+              post: message.snapshot.post,
+              comments: message.snapshot.comments,
+              comment_sample: message.snapshot.commentSample,
+              selection_reasons: message.snapshot.selectionReasons,
             }),
           })
     return response.ok

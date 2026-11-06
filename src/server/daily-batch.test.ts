@@ -17,9 +17,9 @@ let jobs: {name: string; data?: {day: string; sequence: number}; runAt: Date}[]
 let cancelled: string[]
 let now: number
 let scans: number
-let digests: number
+let deliveries: number
 let scanDone: boolean
-let digestStatus: string
+let deliveryStatus: string
 let failScan: boolean
 let pendingAt: number | undefined
 const deps = {
@@ -31,12 +31,12 @@ const deps = {
       ? {status: 'ok', message: 'Daily scan complete.'}
       : {status: 'ok', stage: 'DISCOVER_NEW'}
   },
-  publish: async () => {
-    digests++
-    return {status: digestStatus, message: 'digest result'}
+  sync: async () => {
+    deliveries++
+    return {status: deliveryStatus, message: 'delivery result'}
   },
 }
-const key = 'devsignal:daily-batches:2026-11-06'
+const key = 'devsignal:collector-batches:2026-11-06'
 beforeEach(() => {
   data = new Map()
   expirations = new Map()
@@ -49,9 +49,9 @@ beforeEach(() => {
   cancelled = []
   now = Date.parse('2026-11-06T04:00:00Z')
   scans = 0
-  digests = 0
+  deliveries = 0
   scanDone = false
-  digestStatus = 'idle'
+  deliveryStatus = 'idle'
   failScan = false
   redis.get = (async key => data.get(key)) as typeof redis.get
   redis.set = (async (key, value, options) => {
@@ -87,23 +87,23 @@ afterEach(() => {
   scheduler.cancelJob = original.cancel
 })
 
-test('one morning batch resumes in bounded steps and stops after scan and digests', async () => {
+test('one morning batch resumes in bounded steps and stops after scan and deliveries', async () => {
   assert.equal((await runDailyBatch({}, deps)).status, 'RUNNING')
   assert.equal(scans, 1)
-  assert.equal(digests, 0)
+  assert.equal(deliveries, 0)
   assert.equal(jobs[0]?.name, 'devsignal-continue-batch')
   assert.equal(jobs[0]?.runAt.toISOString(), '2026-11-06T04:01:00.000Z')
   now += 60_000
   scanDone = true
   await runDailyBatch({continuation: jobs[0]?.data}, deps)
-  assert.equal(JSON.parse(data.get(key) ?? '{}').phase, 'DIGEST')
+  assert.equal(JSON.parse(data.get(key) ?? '{}').phase, 'SYNC')
   now += 60_000
   assert.equal(
     (await runDailyBatch({continuation: jobs[1]?.data}, deps)).status,
     'COMPLETE',
   )
   assert.equal(scans, 2)
-  assert.equal(digests, 1)
+  assert.equal(deliveries, 1)
   assert.equal(cancelled.length, 1)
   assert.equal(
     JSON.parse(data.get(key) ?? '{}').finishedAt,
@@ -154,17 +154,17 @@ test('a continuation is scheduled before fallible work and exceptions remain res
   await runDailyBatch({continuation: jobs[0]?.data}, deps)
   assert.equal(scans, 2)
 })
-test('disabled publication is blocked rather than reported as complete, and can be resumed manually', async () => {
+test('disabled export is blocked rather than reported as complete, and can be resumed manually', async () => {
   scanDone = true
   await runDailyBatch({}, deps)
   now += 60_000
-  digestStatus = 'ready'
+  deliveryStatus = 'disabled'
   assert.equal(
     (await runDailyBatch({continuation: jobs[0]?.data}, deps)).status,
     'BLOCKED',
   )
   now += 60_000
-  digestStatus = 'idle'
+  deliveryStatus = 'idle'
   assert.equal((await runDailyBatch({resume: true}, deps)).status, 'COMPLETE')
   assert.equal(JSON.parse(data.get(key) ?? '{}').reason, undefined)
 })
@@ -191,7 +191,7 @@ test('completion after the deadline is not reported as on time', async () => {
   now = Date.parse('2026-11-06T05:59:00Z')
   const late = {
     ...deps,
-    publish: async () => {
+    sync: async () => {
       now += 90_000
       return {status: 'idle'}
     },
@@ -245,21 +245,21 @@ test('the 09:00 continuation retries finalization after an interrupted 08:59:20 
   await redis.set('devsignal:daily-batch-lock', 'interrupted-worker', {
     expiration: new Date(now + 45_000),
   })
-  const apiCounts = {scans, digests}
+  const apiCounts = {scans, deliveries}
   now = Date.parse('2026-11-06T06:00:00Z')
   assert.equal(
     (await runDailyBatch({continuation: jobs[0]?.data}, deps)).status,
     'busy',
   )
   assert.equal(jobs[1]?.runAt.toISOString(), '2026-11-06T06:01:00.000Z')
-  assert.deepEqual({scans, digests}, apiCounts)
+  assert.deepEqual({scans, deliveries}, apiCounts)
   now = Date.parse('2026-11-06T06:01:00Z')
   assert.equal(
     (await runDailyBatch({continuation: jobs[1]?.data}, deps)).status,
     'DEADLINE_MISSED',
   )
   assert.equal(JSON.parse(data.get(key) ?? '{}').status, 'DEADLINE_MISSED')
-  assert.deepEqual({scans, digests}, apiCounts)
+  assert.deepEqual({scans, deliveries}, apiCounts)
   assert.equal(jobs.length, 2)
 })
 
@@ -273,28 +273,25 @@ test('finalization retries stop at the finite recovery window', async () => {
   await runDailyBatch({continuation: jobs[1]?.data}, deps)
   assert.equal(jobs.length, 2)
   assert.equal(scans, 1)
-  assert.equal(digests, 0)
+  assert.equal(deliveries, 0)
 })
 
-test('unresolved sending receipts keep due maintenance resumable before partial completion', async () => {
+test('exhausted inbox delivery failures leave a partial batch', async () => {
   scanDone = true
   await runDailyBatch({}, deps)
   now += 60_000
-  digestStatus = 'unresolved'
-  pendingAt = now + 5 * 60_000
+  deliveryStatus = 'failed'
   assert.equal(
     (await runDailyBatch({continuation: jobs[0]?.data}, deps)).status,
     'RUNNING',
   )
   now += 60_000
-  pendingAt = undefined
+  deliveryStatus = 'idle'
   assert.equal(
     (await runDailyBatch({continuation: jobs[1]?.data}, deps)).status,
     'PARTIAL',
   )
-  const batch = JSON.parse(data.get(key) ?? '{}')
-  assert.equal(batch.reason, 'digest result')
-  assert.deepEqual(batch.errors, ['DIGEST:unresolved'])
+  assert.deepEqual(JSON.parse(data.get(key) ?? '{}').errors, ['SYNC:failed'])
 })
 
 test('the safety step budget is partial rather than a falsely reported clock deadline', async () => {

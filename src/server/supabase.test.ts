@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import {test} from 'node:test'
-import {sendDigest, supabaseOrigin} from './supabase.ts'
+import {sendSnapshot, supabaseOrigin} from './supabase.ts'
 
 test('Supabase URLs cannot redirect secrets to arbitrary hosts or paths', () => {
   assert.equal(
@@ -18,7 +18,7 @@ test('Supabase URLs cannot redirect secrets to arbitrary hosts or paths', () => 
   }
 })
 
-test('external delivery uses only the restricted digest endpoint and refuses redirects', async () => {
+test('external delivery uses only the restricted collector endpoint and refuses redirects', async () => {
   const request = (async (url, init) => {
     assert.equal(
       String(url),
@@ -34,13 +34,13 @@ test('external delivery uses only the restricted digest endpoint and refuses red
     assert.equal(body.sourceId, 't3_abc')
     return new Response(null, {status: 204})
   }) as typeof fetch
-  await sendDigest(
+  await sendSnapshot(
     {action: 'delete', sourceId: 't3_abc'},
     {url: 'https://projectref.supabase.co', token: 'test-token'},
     request,
   )
   await assert.rejects(
-    sendDigest(
+    sendSnapshot(
       {action: 'delete', sourceId: 't3_abc'},
       {url: 'https://projectref.supabase.co', token: 'test-token'},
       (async () =>

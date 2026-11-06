@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict'
 import {test} from 'node:test'
-import {sendDigest} from '../server/supabase.ts'
-import {DIGEST_RETENTION_MS, type Digest} from '../shared/digest.ts'
+import {sendSnapshot} from '../server/supabase.ts'
+import {snapshot} from '../server/test/collection.ts'
+import {MAX_PAYLOAD_BYTES} from '../shared/collection.ts'
 import {handleIngest} from './handler.ts'
 
 const token = 'a-long-test-token-with-at-least-32-characters'
@@ -10,23 +11,6 @@ const config = {
   projectUrl: 'https://projectref.supabase.co',
   serviceKey: 'server-only-key',
 }
-const digest = (): Digest => ({
-  sourceId: 't3_abc',
-  sourceSubreddit: 'ClaudeAI',
-  runId: '2026-11-06',
-  publishedPostId: 't3_xyz',
-  createdAt: new Date().toISOString(),
-  expiresAt: new Date(Date.now() + DIGEST_RETENTION_MS - 1000).toISOString(),
-  topic: {
-    suitable: true,
-    title: 'Discussion',
-    summary: 'A finding',
-    whyNow: 'Recent sample',
-    perspectives: 'Different views',
-    angle: 'Explore the cause',
-    uncertainty: 'Limited evidence',
-  },
-})
 function request(payload: unknown, authorization = `Bearer ${token}`) {
   return new Request(
     'https://projectref.supabase.co/functions/v1/devsignal-ingest',
@@ -42,7 +26,7 @@ test('ingest authenticates before accessing storage and rejects raw or oversized
   assert.equal(
     (
       await handleIngest(
-        request({action: 'upsert', digest: digest()}, 'Bearer wrong'),
+        request({action: 'upsert', snapshot: snapshot()}, 'Bearer wrong'),
         config,
         backend,
       )
@@ -54,7 +38,7 @@ test('ingest authenticates before accessing storage and rejects raw or oversized
       await handleIngest(
         request({
           action: 'upsert',
-          digest: {...digest(), comments: ['raw text']},
+          snapshot: {...snapshot(), unexpected: ['raw text']},
         }),
         config,
         backend,
@@ -67,7 +51,7 @@ test('ingest authenticates before accessing storage and rejects raw or oversized
       await handleIngest(
         request({
           action: 'upsert',
-          digest: {...digest(), topic: {...digest().topic, author: 'user'}},
+          snapshot: {...snapshot(), post: {...snapshot().post, author: 'user'}},
         }),
         config,
         backend,
@@ -80,8 +64,8 @@ test('ingest authenticates before accessing storage and rejects raw or oversized
       await handleIngest(
         request({
           action: 'upsert',
-          digest: {
-            ...digest(),
+          snapshot: {
+            ...snapshot(),
             expiresAt: new Date(Date.now() + 60 * 86400_000).toISOString(),
           },
         }),
@@ -94,7 +78,7 @@ test('ingest authenticates before accessing storage and rejects raw or oversized
   assert.equal(
     (
       await handleIngest(
-        request({padding: 'x'.repeat(25_000)}),
+        request({padding: 'x'.repeat(MAX_PAYLOAD_BYTES + 1)}),
         config,
         backend,
       )
@@ -103,25 +87,27 @@ test('ingest authenticates before accessing storage and rejects raw or oversized
   )
   assert.equal(calls, 0)
 })
-test('Devvit sender to ingest handler to storage preserves only the validated digest and is idempotent', async () => {
+test('Devvit sender to ingest handler to storage preserves only the validated snapshot and is idempotent', async () => {
   const rows = new Map<string, unknown>()
   const backend = (async (url, init) => {
     assert.equal(new Headers(init?.headers).get('apikey'), 'server-only-key')
     assert.match(
       String(url),
-      /^https:\/\/projectref.supabase.co\/rest\/v1\/devsignal_digests\?/,
+      /^https:\/\/projectref.supabase.co\/rest\/v1\/devsignal_inbox\?/,
     )
     if (init?.method === 'DELETE') rows.delete('t3_abc')
     else {
       const row = JSON.parse(String(init?.body))
       assert.deepEqual(Object.keys(row).sort(), [
-        'created_at',
+        'comment_sample',
+        'comments',
         'expires_at',
-        'published_post_id',
+        'fetched_at',
+        'post',
         'run_id',
+        'selection_reasons',
         'source_id',
         'source_subreddit',
-        'topic',
       ])
       rows.set(row.source_id, row)
     }
@@ -131,11 +117,11 @@ test('Devvit sender to ingest handler to storage preserves only the validated di
     assert.equal(new Headers(init?.headers).get('apikey'), null)
     return handleIngest(new Request(url, init), config, backend)
   }) as typeof fetch
-  const payload = {action: 'upsert' as const, digest: digest()}
-  await sendDigest(payload, {url: config.projectUrl, token}, transport)
-  await sendDigest(payload, {url: config.projectUrl, token}, transport)
+  const payload = {action: 'upsert' as const, snapshot: snapshot()}
+  await sendSnapshot(payload, {url: config.projectUrl, token}, transport)
+  await sendSnapshot(payload, {url: config.projectUrl, token}, transport)
   assert.equal(rows.size, 1)
-  await sendDigest(
+  await sendSnapshot(
     {action: 'delete', sourceId: 't3_abc'},
     {url: config.projectUrl, token},
     transport,

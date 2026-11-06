@@ -1,16 +1,26 @@
 import {createHash, randomUUID} from 'node:crypto'
 import {reddit, redis} from '@devvit/web/server'
 import type {T3} from '@devvit/web/shared'
-import {SOURCE_SUBREDDITS} from '../shared/digest.ts'
+import {
+  RETENTION_MS,
+  type Snapshot,
+  SOURCE_SUBREDDITS,
+  type SourceSubreddit,
+} from '../shared/collection.ts'
 import {istanbulDay} from '../shared/scan-time.ts'
-import {releaseLease} from './lease.ts'
+import {
+  failureCode,
+  queueDeletion,
+  readSnapshot,
+  storeSnapshot,
+} from './collection-store.ts'
+import {COLLECTOR_LOCK, COLLECTOR_LOCK_MS, releaseLease} from './lease.ts'
 
 const SUBREDDITS = SOURCE_SUBREDDITS
-const TTL = 48 * 60 * 60 * 1000
+const TTL = RETENTION_MS
 const PAGE_SIZE = 20
-const POSTS_PER_CHUNK = 3
+const POSTS_PER_CHUNK = 1
 const MAX_CANDIDATES = 15
-const LOCK_MS = 180_000
 
 type Stage =
   | 'DISCOVER_NEW'
@@ -36,7 +46,8 @@ type PostRecord = {
   sources: string[]
 }
 type Checkpoint = {
-  subreddit: string
+  schemaVersion: 2
+  subreddit: SourceSubreddit
   runId: string
   stage: Stage
   cursor: string | null
@@ -47,6 +58,7 @@ type Checkpoint = {
   errors: string[]
   posts: Record<string, PostRecord>
   candidates: T3[]
+  failures: Record<string, number>
 }
 
 function expiration(now = Date.now()): Date {
@@ -58,8 +70,9 @@ async function put(key: string, value: unknown): Promise<void> {
 function runDay(now: Date): string {
   return istanbulDay(now.getTime())
 }
-function initial(subreddit: string, runId: string): Checkpoint {
+function initial(subreddit: SourceSubreddit, runId: string): Checkpoint {
   return {
+    schemaVersion: 2,
     subreddit,
     runId,
     stage: 'DISCOVER_NEW',
@@ -71,6 +84,7 @@ function initial(subreddit: string, runId: string): Checkpoint {
     errors: [],
     posts: {},
     candidates: [],
+    failures: {},
   }
 }
 const nextStage: Record<string, Stage> = {
@@ -223,10 +237,42 @@ async function enrich(cp: Checkpoint): Promise<void> {
     cp.commentOffset + POSTS_PER_CHUNK,
   )
   for (const postId of ids) {
-    // Retain this checkpoint stage for compatibility with in-progress runs.
-    // Comments are now fetched fresh by the digest worker and never persisted.
-    await redis.del(`devsignal:comments:${postId}`)
-    cp.commentOffset++
+    try {
+      const post = cp.posts[postId]
+      const reasons: Snapshot['selectionReasons'] = []
+      if (post) {
+        if (
+          /\b(api|code|coding|developer|software|model|llm|ai|agent|claude|gpt|prompt|tool|build|project)\b/i.test(
+            post.title,
+          )
+        )
+          reasons.push('technical-title')
+        if (Date.now() - Date.parse(post.createdAt) < 48 * 3600_000)
+          reasons.push('recent')
+        if (post.commentCount >= 10) reasons.push('active-discussion')
+        if (post.sources.length > 1) reasons.push('multiple-listings')
+        if (post.sticky) reasons.push('sticky-penalty')
+        if (post.megathread) reasons.push('megathread-penalty')
+        if (post.previouslySeen) reasons.push('previously-seen-penalty')
+      }
+      const snapshot = await readSnapshot(
+        postId,
+        cp.subreddit,
+        cp.runId,
+        reasons,
+      )
+      if (snapshot) await storeSnapshot(snapshot)
+      else {
+        await queueDeletion(postId)
+        delete cp.posts[postId]
+      }
+      cp.commentOffset++
+    } catch (error) {
+      const attempts = (cp.failures[postId] ?? 0) + 1
+      cp.failures[postId] = attempts
+      cp.errors.push(`${postId}:${failureCode(error)}:attempt_${attempts}`)
+      if (attempts >= 3) cp.commentOffset++
+    }
   }
   cp.cursor = String(cp.commentOffset)
   if (cp.commentOffset >= cp.candidates.length) {
@@ -244,9 +290,9 @@ async function save(cp: Checkpoint): Promise<void> {
 
 export async function runCollector() {
   const token = randomUUID()
-  const lease = await redis.set('devsignal:collector-lock', token, {
+  const lease = await redis.set(COLLECTOR_LOCK, token, {
     nx: true,
-    expiration: new Date(Date.now() + LOCK_MS),
+    expiration: new Date(Date.now() + COLLECTOR_LOCK_MS),
   })
   if (!lease)
     return {
@@ -257,8 +303,8 @@ export async function runCollector() {
     await purgeLegacyComments()
     return await runChunk()
   } finally {
-    await releaseLease('devsignal:collector-lock', token, error =>
-      console.error('Could not release collector lock:', error),
+    await releaseLease(COLLECTOR_LOCK, token, () =>
+      console.error('Could not release collector lock; waiting for expiry.'),
     )
   }
 }
@@ -293,7 +339,7 @@ async function runChunk() {
   for (const subreddit of SUBREDDITS) {
     const raw = await redis.get(`devsignal:checkpoints:${subreddit}`)
     let cp = raw ? (JSON.parse(raw) as Checkpoint) : initial(subreddit, today)
-    if (cp.stage === 'COMPLETE' && cp.runId < today)
+    if (cp.schemaVersion !== 2 || cp.runId < today)
       cp = initial(subreddit, today)
     for (const post of Object.values(cp.posts ?? {})) {
       if (!/^[a-f0-9]{64}$/.test(post.author))
@@ -306,7 +352,11 @@ async function runChunk() {
   const cp = checkpoints
     .filter(value => value.stage !== 'COMPLETE')
     .sort((a, b) => a.lastRun.localeCompare(b.lastRun))[0]
-  if (!cp) return {status: 'ok', message: 'Daily scan complete.'}
+  if (!cp)
+    return {
+      status: checkpoints.some(value => value.errors.length) ? 'partial' : 'ok',
+      message: 'Daily scan complete.',
+    }
   const errorCount = cp.errors.length
   try {
     if (cp.stage.startsWith('DISCOVER_')) await discover(cp)
@@ -333,7 +383,7 @@ async function runChunk() {
       errors: cp.errors,
     }
   } catch (error) {
-    cp.errors.push(`${cp.stage}: ${String(error).slice(0, 300)}`)
+    cp.errors.push(`${cp.stage}:${failureCode(error)}`)
     await save(cp)
     return {
       status: 'partial',
