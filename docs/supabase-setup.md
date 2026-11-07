@@ -1,6 +1,6 @@
 # Supabase collector inbox setup — not deployed
 
-No project has been created. These are owner setup steps, not completed deployment claims. Never paste keys into chat or commit them.
+The private project `hpklrxtvgrimxjcchpdk.supabase.co`, inbox schema, ingest function and 15-minute cleanup job are configured. Synthetic authentication, upsert/replay and deletion checks passed. Reddit-content export remains disabled pending the domain review. The steps below document setup and verification for maintainers. Never paste keys into chat or commit them.
 
 1. Create a private Supabase project and record `https://PROJECT_REF.supabase.co`.
 2. Run `npm run configure:supabase -- https://PROJECT_REF.supabase.co`. It enables HTTP and adds the exact hostname/public URL to devvit.json. Domain configuration is not Reddit approval.
