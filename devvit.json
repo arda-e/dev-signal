@@ -56,9 +56,7 @@
     "redis": true,
     "http": {
       "enable": true,
-      "domains": [
-        "hpklrxtvgrimxjcchpdk.supabase.co"
-      ]
+      "domains": ["hpklrxtvgrimxjcchpdk.supabase.co"]
     }
   },
   "scheduler": {
