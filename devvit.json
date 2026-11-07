@@ -55,8 +55,10 @@
   "permissions": {
     "redis": true,
     "http": {
-      "enable": false,
-      "domains": []
+      "enable": true,
+      "domains": [
+        "hpklrxtvgrimxjcchpdk.supabase.co"
+      ]
     }
   },
   "scheduler": {
@@ -74,7 +76,8 @@
     "global": {
       "supabase-project-url": {
         "type": "string",
-        "label": "Supabase project URL"
+        "label": "Supabase project URL",
+        "defaultValue": "https://hpklrxtvgrimxjcchpdk.supabase.co"
       },
       "supabase-ingest-token": {
         "type": "string",
