@@ -1,8 +1,8 @@
-# DevSignal Privacy Policy
+# Ardico Reading Inbox Privacy Policy
 
 Last updated: 7 November 2026. Operator/contact: [u/ardico](https://www.reddit.com/user/ardico/).
 
-DevSignal reads public post metadata from r/ClaudeAI and r/ChatGPT to select technical discussions for personal, non-commercial reading and learning. Metadata/checkpoints have a 48-hour Redis TTL after write. Candidate diversity uses a daily salted author hash internally; that is pseudonymous data and is not exported.
+Ardico Reading Inbox reads public post metadata from r/ClaudeAI and r/ChatGPT to select technical discussions for personal, non-commercial reading and learning. Metadata/checkpoints have a 48-hour Redis TTL after write. Candidate diversity uses a daily salted author hash internally; that is pseudonymous data and is not exported.
 
 Selected records include source title/body, engagement counts, timestamps and a bounded sample of up to 30 newest top-level comments from at most two pages. Comment IDs, parent IDs, bodies, scores and timestamps are retained; post bodies are capped at 6,000 UTF-16 code units and comments at 700. Dedicated author names, account IDs and profile fields are excluded from snapshots. Raw text can identify people: no complete anonymization is promised.
 

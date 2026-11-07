@@ -1,4 +1,4 @@
-# DevSignal — selected Reddit discussions inbox
+# Ardico Reading Inbox — selected Reddit discussions inbox
 
 A personal, non-commercial reading assistant for public technical discussions in r/ClaudeAI and r/ChatGPT. **Devvit is only the collector.** It discovers posts, applies lightweight metadata filters, samples selected discussions and delivers them to a private Supabase inbox. The owner intends to process that inbox later with a separate scheduled AI workflow for personal learning and manually written posts.
 

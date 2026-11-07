@@ -21,21 +21,21 @@
         "endpoint": "/internal/on/menu/new-post"
       },
       {
-        "label": "DevSignal: Run Scan",
+        "label": "Ardico Inbox: Run Scan",
         "description": "Discover and checkpoint one bounded batch of source posts",
         "location": "subreddit",
         "forUserType": "moderator",
         "endpoint": "/internal/menu/devsignal-scan"
       },
       {
-        "label": "DevSignal: Sync Inbox",
+        "label": "Ardico Inbox: Sync Inbox",
         "description": "Refresh and deliver one selected post with bounded comments to Supabase",
         "location": "subreddit",
         "forUserType": "moderator",
         "endpoint": "/internal/menu/devsignal-sync"
       },
       {
-        "label": "DevSignal: Resume Morning Run",
+        "label": "Ardico Inbox: Resume Morning Run",
         "description": "Resume the current daily batch before 09:00 Istanbul",
         "location": "subreddit",
         "forUserType": "moderator",

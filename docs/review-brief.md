@@ -1,4 +1,4 @@
-# DevSignal collector review brief
+# Ardico Reading Inbox collector review brief
 
 Owner/contact: u/ardico. Personal, non-commercial reading and learning project. No revenue, resale, model training or user profiling. This version replaces the previous proposed public-digest design with a collector-only architecture.
 
