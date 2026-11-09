@@ -23,7 +23,7 @@
   "devDependencies": {
     "@biomejs/biome": "2.6.4",
     "@devvit/web": "0.15.2",
-    "@electric-sql/pglite": "0.5.15",
+    "@electric-sql/pglite": "0.5.16",
     "@types/node": "24.19.2",
     "devvit": "0.15.2",
     "esbuild": "0.28.2",
